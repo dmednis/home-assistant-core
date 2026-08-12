@@ -6,12 +6,15 @@
   "dhcp": [
     {
       "hostname": "airobot-thermostat-*"
+    },
+    {
+      "hostname": "airobot-ventilation"
     }
   ],
   "documentation": "https://www.home-assistant.io/integrations/airobot",
   "integration_type": "device",
   "iot_class": "local_polling",
-  "loggers": ["pyairobotrest"],
+  "loggers": ["pyairobotmodbus", "pyairobotrest"],
   "quality_scale": "platinum",
-  "requirements": ["pyairobotrest==0.4.0"]
+  "requirements": ["pyairobotmodbus==0.3.1", "pyairobotrest==0.4.0"]
 }
