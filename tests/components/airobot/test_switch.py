@@ -175,3 +175,72 @@ async def test_switch_error_handling(
 
     expected_value = service == SERVICE_TURN_ON
     mock_method.assert_called_once_with(expected_value)
+
+
+@pytest.mark.usefixtures("entity_registry_enabled_by_default", "init_vu_integration")
+async def test_vu_switches(
+    hass: HomeAssistant,
+    snapshot: SnapshotAssertion,
+    entity_registry: er.EntityRegistry,
+    mock_vu_config_entry: MockConfigEntry,
+) -> None:
+    """Test the VU switch entities."""
+    await snapshot_platform(
+        hass, entity_registry, snapshot, mock_vu_config_entry.entry_id
+    )
+
+
+@pytest.mark.usefixtures("entity_registry_enabled_by_default", "init_vu_integration")
+@pytest.mark.parametrize(
+    ("entity_id", "method_name"),
+    [
+        ("switch.airobot_ventilation_boost", "async_set_boost"),
+        ("switch.airobot_ventilation_overpressure", "async_set_overpressure"),
+        ("switch.airobot_ventilation_bypass", "async_set_bypass"),
+        ("switch.airobot_ventilation_humidity_control", "async_set_humidity_control"),
+        ("switch.airobot_ventilation_voc_control", "async_set_voc_control"),
+        ("switch.airobot_ventilation_pm_control", "async_set_pm_control"),
+    ],
+)
+async def test_vu_switch_turn_on(
+    hass: HomeAssistant,
+    mock_vu_client: AsyncMock,
+    entity_id: str,
+    method_name: str,
+) -> None:
+    """Test VU switch turn on functionality."""
+    await hass.services.async_call(
+        SWITCH_DOMAIN,
+        SERVICE_TURN_ON,
+        {ATTR_ENTITY_ID: entity_id},
+        blocking=True,
+    )
+    getattr(mock_vu_client, method_name).assert_called_once_with(True)
+
+
+@pytest.mark.usefixtures("entity_registry_enabled_by_default", "init_vu_integration")
+@pytest.mark.parametrize(
+    ("entity_id", "method_name"),
+    [
+        ("switch.airobot_ventilation_boost", "async_set_boost"),
+        ("switch.airobot_ventilation_overpressure", "async_set_overpressure"),
+        ("switch.airobot_ventilation_bypass", "async_set_bypass"),
+        ("switch.airobot_ventilation_humidity_control", "async_set_humidity_control"),
+        ("switch.airobot_ventilation_voc_control", "async_set_voc_control"),
+        ("switch.airobot_ventilation_pm_control", "async_set_pm_control"),
+    ],
+)
+async def test_vu_switch_turn_off(
+    hass: HomeAssistant,
+    mock_vu_client: AsyncMock,
+    entity_id: str,
+    method_name: str,
+) -> None:
+    """Test VU switch turn off functionality."""
+    await hass.services.async_call(
+        SWITCH_DOMAIN,
+        SERVICE_TURN_OFF,
+        {ATTR_ENTITY_ID: entity_id},
+        blocking=True,
+    )
+    getattr(mock_vu_client, method_name).assert_called_once_with(False)

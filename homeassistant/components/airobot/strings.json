@@ -209,6 +209,9 @@
       "extract_airflow": {
         "name": "Extract airflow"
       },
+      "extract_fan_level": {
+        "name": "Extract fan level"
+      },
       "extract_fan_rpm": {
         "name": "Extract fan speed"
       },
@@ -238,6 +241,9 @@
       },
       "supply_airflow": {
         "name": "Supply airflow"
+      },
+      "supply_fan_level": {
+        "name": "Supply fan level"
       },
       "supply_fan_rpm": {
         "name": "Supply fan speed"

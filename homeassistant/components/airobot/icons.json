@@ -1,21 +1,144 @@
 {
   "entity": {
+    "binary_sensor": {
+      "error_fan1": {
+        "default": "mdi:fan-alert"
+      },
+      "error_fan2": {
+        "default": "mdi:fan-alert"
+      },
+      "error_filter": {
+        "default": "mdi:air-filter"
+      },
+      "error_fire_alarm": {
+        "default": "mdi:fire-alert"
+      },
+      "error_heater": {
+        "default": "mdi:radiator-off"
+      },
+      "error_low_supply": {
+        "default": "mdi:fan-off"
+      },
+      "error_sensor_1": {
+        "default": "mdi:alert-circle"
+      },
+      "error_sensor_2": {
+        "default": "mdi:alert-circle"
+      },
+      "error_sensor_3": {
+        "default": "mdi:alert-circle"
+      },
+      "error_sensor_4": {
+        "default": "mdi:alert-circle"
+      },
+      "error_sensor_5": {
+        "default": "mdi:alert-circle"
+      },
+      "error_sensor_co2": {
+        "default": "mdi:molecule-co2"
+      },
+      "filter_alert": {
+        "default": "mdi:air-filter"
+      },
+      "server_connected": {
+        "default": "mdi:cloud-check"
+      }
+    },
     "button": {
       "recalibrate_co2": {
         "default": "mdi:molecule-co2"
+      },
+      "reset_filter_timer": {
+        "default": "mdi:air-filter"
       }
     },
     "number": {
+      "boost_timeout": {
+        "default": "mdi:timer"
+      },
+      "co2_setpoint": {
+        "default": "mdi:molecule-co2"
+      },
+      "filter_reminder_interval": {
+        "default": "mdi:air-filter"
+      },
+      "humidity_setpoint": {
+        "default": "mdi:water-percent"
+      },
       "hysteresis_band": {
         "default": "mdi:delta"
+      },
+      "overpressure_fan_level": {
+        "default": "mdi:fan-chevron-up"
+      },
+      "overpressure_timeout": {
+        "default": "mdi:timer"
+      },
+      "pm25_setpoint": {
+        "default": "mdi:blur"
+      },
+      "voc_setpoint": {
+        "default": "mdi:air-purifier"
+      }
+    },
+    "select": {
+      "operating_mode": {
+        "default": "mdi:cog"
+      }
+    },
+    "sensor": {
+      "extract_airflow": {
+        "default": "mdi:weather-windy"
+      },
+      "extract_fan_level": {
+        "default": "mdi:fan"
+      },
+      "extract_fan_rpm": {
+        "default": "mdi:fan"
+      },
+      "heat_recovery_efficiency": {
+        "default": "mdi:heat-wave"
+      },
+      "supply_airflow": {
+        "default": "mdi:weather-windy"
+      },
+      "supply_fan_level": {
+        "default": "mdi:fan"
+      },
+      "supply_fan_rpm": {
+        "default": "mdi:fan"
+      },
+      "voc": {
+        "default": "mdi:air-purifier"
+      },
+      "working_time": {
+        "default": "mdi:clock-outline"
       }
     },
     "switch": {
       "actuator_exercise_disabled": {
         "default": "mdi:valve"
       },
+      "boost": {
+        "default": "mdi:fan-chevron-up"
+      },
+      "bypass": {
+        "default": "mdi:swap-horizontal"
+      },
       "child_lock": {
         "default": "mdi:lock"
+      },
+      "humidity_control": {
+        "default": "mdi:water-percent"
+      },
+      "overpressure": {
+        "default": "mdi:arrow-up-bold"
+      },
+      "pm_control": {
+        "default": "mdi:blur"
+      },
+      "voc_control": {
+        "default": "mdi:air-purifier"
       }
     }
   }
