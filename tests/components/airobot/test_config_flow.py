@@ -2,6 +2,11 @@
 
 from unittest.mock import AsyncMock
 
+from pyairobotmodbus.exceptions import (
+    AirobotConnectionError as VUConnectionError,
+    AirobotError as VUError,
+    AirobotTimeoutError as VUTimeoutError,
+)
 from pyairobotrest.exceptions import (
     AirobotAuthError,
     AirobotConnectionError,
@@ -10,7 +15,12 @@ from pyairobotrest.exceptions import (
 import pytest
 
 from homeassistant import config_entries
-from homeassistant.components.airobot.const import DOMAIN
+from homeassistant.components.airobot.const import (
+    CONF_DEVICE_TYPE,
+    DEVICE_TYPE_THERMOSTAT,
+    DEVICE_TYPE_VENTILATION,
+    DOMAIN,
+)
 from homeassistant.const import CONF_HOST, CONF_MAC, CONF_PASSWORD, CONF_USERNAME
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
@@ -24,6 +34,10 @@ TEST_USER_INPUT = {
     CONF_PASSWORD: "test-password",
 }
 
+TEST_VU_INPUT = {
+    CONF_HOST: "192.168.1.200",
+}
+
 
 async def test_user_flow(
     hass: HomeAssistant,
@@ -34,7 +48,15 @@ async def test_user_flow(
     result = await hass.config_entries.flow.async_init(
         DOMAIN, context={"source": config_entries.SOURCE_USER}
     )
+    assert result["type"] is FlowResultType.MENU
+    assert result["step_id"] == "user"
+
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {"next_step_id": "thermostat"},
+    )
     assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "thermostat"
     assert result["errors"] == {}
 
     result = await hass.config_entries.flow.async_configure(
@@ -44,7 +66,10 @@ async def test_user_flow(
 
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert result["title"] == "Test Thermostat"
-    assert result["data"] == TEST_USER_INPUT
+    assert result["data"] == {
+        **TEST_USER_INPUT,
+        CONF_DEVICE_TYPE: DEVICE_TYPE_THERMOSTAT,
+    }
     assert result["result"].unique_id == "T01A1B2C3"
     assert len(mock_setup_entry.mock_calls) == 1
 
@@ -69,6 +94,13 @@ async def test_form_exceptions(
     result = await hass.config_entries.flow.async_init(
         DOMAIN, context={"source": config_entries.SOURCE_USER}
     )
+    assert result["type"] is FlowResultType.MENU
+
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {"next_step_id": "thermostat"},
+    )
+    assert result["type"] is FlowResultType.FORM
 
     mock_airobot_client.get_settings.side_effect = exception
 
@@ -89,7 +121,10 @@ async def test_form_exceptions(
 
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert result["title"] == "Test Thermostat"
-    assert result["data"] == TEST_USER_INPUT
+    assert result["data"] == {
+        **TEST_USER_INPUT,
+        CONF_DEVICE_TYPE: DEVICE_TYPE_THERMOSTAT,
+    }
     assert len(mock_setup_entry.mock_calls) == 1
 
 
@@ -106,10 +141,140 @@ async def test_duplicate_entry(
     result = await hass.config_entries.flow.async_init(
         DOMAIN, context={"source": config_entries.SOURCE_USER}
     )
+    assert result["type"] is FlowResultType.MENU
+
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {"next_step_id": "thermostat"},
+    )
 
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"],
         TEST_USER_INPUT,
+    )
+
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "already_configured"
+
+
+async def test_user_flow_ventilation(
+    hass: HomeAssistant,
+    mock_setup_entry: AsyncMock,
+    mock_vu_client: AsyncMock,
+) -> None:
+    """Test user flow for ventilation unit."""
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": config_entries.SOURCE_USER}
+    )
+    assert result["type"] is FlowResultType.MENU
+    assert result["step_id"] == "user"
+
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {"next_step_id": "ventilation"},
+    )
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "ventilation"
+    assert result["errors"] == {}
+
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        TEST_VU_INPUT,
+    )
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["title"] == "Airobot Ventilation"
+    assert result["data"] == {
+        **TEST_VU_INPUT,
+        CONF_DEVICE_TYPE: DEVICE_TYPE_VENTILATION,
+    }
+    # No serial number is available over Modbus, so no unique ID is set
+    assert result["result"].unique_id is None
+    assert len(mock_setup_entry.mock_calls) == 1
+
+
+@pytest.mark.parametrize(
+    ("exception", "error_base"),
+    [
+        (VUConnectionError("Connection failed"), "cannot_connect"),
+        (VUTimeoutError("Timeout"), "cannot_connect"),
+        (VUError("Generic error"), "cannot_connect"),
+        (Exception("Unexpected error"), "unknown"),
+    ],
+)
+async def test_ventilation_flow_errors(
+    hass: HomeAssistant,
+    mock_setup_entry: AsyncMock,
+    mock_vu_client: AsyncMock,
+    exception: Exception,
+    error_base: str,
+) -> None:
+    """Test we handle various errors in ventilation flow."""
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": config_entries.SOURCE_USER}
+    )
+    assert result["type"] is FlowResultType.MENU
+
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {"next_step_id": "ventilation"},
+    )
+    assert result["type"] is FlowResultType.FORM
+
+    mock_vu_client.async_get_data.side_effect = exception
+
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        TEST_VU_INPUT,
+    )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["errors"] == {"base": error_base}
+
+    # Recover from error
+    mock_vu_client.async_get_data.side_effect = None
+
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        TEST_VU_INPUT,
+    )
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["title"] == "Airobot Ventilation"
+    assert len(mock_setup_entry.mock_calls) == 1
+
+
+async def test_ventilation_duplicate_entry(
+    hass: HomeAssistant,
+    mock_setup_entry: AsyncMock,
+    mock_vu_client: AsyncMock,
+    mock_vu_config_entry: MockConfigEntry,
+) -> None:
+    """Test duplicate detection for ventilation unit."""
+    # Manually added entries are matched on host
+    mock_vu_config_entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={
+            **TEST_VU_INPUT,
+            CONF_DEVICE_TYPE: DEVICE_TYPE_VENTILATION,
+        },
+        title="Airobot Ventilation",
+    )
+    mock_vu_config_entry.add_to_hass(hass)
+
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": config_entries.SOURCE_USER}
+    )
+    assert result["type"] is FlowResultType.MENU
+
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {"next_step_id": "ventilation"},
+    )
+
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        TEST_VU_INPUT,
     )
 
     assert result["type"] is FlowResultType.ABORT
@@ -152,6 +317,7 @@ async def test_dhcp_discovery(
     assert result["data"][CONF_USERNAME] == "T01A1B2C3"
     assert result["data"][CONF_PASSWORD] == "test-password"
     assert result["data"][CONF_MAC] == "b8d61aabcdef"
+    assert result["data"][CONF_DEVICE_TYPE] == DEVICE_TYPE_THERMOSTAT
 
 
 @pytest.mark.parametrize(
@@ -232,6 +398,120 @@ async def test_dhcp_discovery_duplicate(
 
     # Verify the IP was updated in the existing entry
     assert mock_config_entry.data[CONF_HOST] == "192.168.1.101"
+
+
+async def test_dhcp_discovery_ventilation(
+    hass: HomeAssistant,
+    mock_setup_entry: AsyncMock,
+    mock_vu_client: AsyncMock,
+) -> None:
+    """Test DHCP discovery for ventilation unit."""
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={"source": config_entries.SOURCE_DHCP},
+        data=DhcpServiceInfo(
+            ip="192.168.1.200",
+            macaddress="aabbccddeeff",
+            hostname="airobot-ventilation",
+        ),
+    )
+    await hass.async_block_till_done()
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "vu_dhcp_confirm"
+    assert result["description_placeholders"] == {
+        "host": "192.168.1.200",
+    }
+
+    # Confirm the discovery
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {},
+    )
+    await hass.async_block_till_done()
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["title"] == "Airobot Ventilation"
+    assert result["data"][CONF_HOST] == "192.168.1.200"
+    assert result["data"][CONF_DEVICE_TYPE] == DEVICE_TYPE_VENTILATION
+    assert result["data"][CONF_MAC] == "aabbccddeeff"
+    assert result["result"].unique_id == "aabbccddeeff"
+
+
+async def test_dhcp_discovery_ventilation_duplicate(
+    hass: HomeAssistant,
+    mock_setup_entry: AsyncMock,
+    mock_vu_client: AsyncMock,
+    mock_vu_config_entry: MockConfigEntry,
+) -> None:
+    """Test DHCP discovery for ventilation unit with duplicate MAC."""
+    # The mock_vu_config_entry has unique_id "aa:bb:cc:dd:ee:ff"
+    # We need a matching MAC address format
+    vu_entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={
+            CONF_HOST: "192.168.1.200",
+            CONF_DEVICE_TYPE: DEVICE_TYPE_VENTILATION,
+            CONF_MAC: "aabbccddeeff",
+        },
+        unique_id="aabbccddeeff",
+        title="Airobot Ventilation",
+    )
+    vu_entry.add_to_hass(hass)
+
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={"source": config_entries.SOURCE_DHCP},
+        data=DhcpServiceInfo(
+            ip="192.168.1.201",  # Different IP
+            macaddress="aabbccddeeff",  # Same MAC
+            hostname="airobot-ventilation",
+        ),
+    )
+    await hass.async_block_till_done()
+
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "already_configured"
+
+    # Verify the IP was updated
+    assert vu_entry.data[CONF_HOST] == "192.168.1.201"
+
+
+async def test_dhcp_discovery_ventilation_manual_duplicate(
+    hass: HomeAssistant,
+    mock_setup_entry: AsyncMock,
+    mock_vu_client: AsyncMock,
+) -> None:
+    """Test DHCP discovery aborts for a manually added ventilation unit."""
+    # Manually added entries have no unique ID, only connection data
+    vu_entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={
+            **TEST_VU_INPUT,
+            CONF_DEVICE_TYPE: DEVICE_TYPE_VENTILATION,
+        },
+        title="Airobot Ventilation",
+    )
+    vu_entry.add_to_hass(hass)
+
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={"source": config_entries.SOURCE_DHCP},
+        data=DhcpServiceInfo(
+            ip="192.168.1.200",
+            macaddress="aabbccddeeff",
+            hostname="airobot-ventilation",
+        ),
+    )
+    await hass.async_block_till_done()
+
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "already_configured"
+
+    # The manual entry is upgraded with the discovered MAC so future
+    # IP changes are tracked through the unique ID
+    assert vu_entry.unique_id == "aabbccddeeff"
+    assert vu_entry.data[CONF_MAC] == "aabbccddeeff"
 
 
 @pytest.mark.usefixtures("mock_setup_entry")
@@ -424,3 +704,118 @@ async def test_reconfigure_flow_errors(
     assert result["reason"] == "reconfigure_successful"
     assert mock_config_entry.data[CONF_HOST] == "192.168.1.200"
     assert mock_config_entry.data[CONF_PASSWORD] == "new-password"
+
+
+async def test_reconfigure_ventilation(
+    hass: HomeAssistant,
+    mock_setup_entry: AsyncMock,
+    mock_vu_client: AsyncMock,
+    mock_vu_config_entry: MockConfigEntry,
+) -> None:
+    """Test reconfiguration flow for ventilation unit."""
+    mock_vu_config_entry.add_to_hass(hass)
+
+    result = await mock_vu_config_entry.start_reconfigure_flow(hass)
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "reconfigure_ventilation"
+
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {CONF_HOST: "192.168.1.201"},
+    )
+
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "reconfigure_successful"
+    assert mock_vu_config_entry.data[CONF_HOST] == "192.168.1.201"
+
+
+async def test_reconfigure_ventilation_conflict(
+    hass: HomeAssistant,
+    mock_setup_entry: AsyncMock,
+    mock_vu_client: AsyncMock,
+    mock_vu_config_entry: MockConfigEntry,
+) -> None:
+    """Test the ventilation reconfigure flow rejects a configured device."""
+    mock_vu_config_entry.add_to_hass(hass)
+    other_entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={
+            CONF_HOST: "192.168.1.201",
+            CONF_DEVICE_TYPE: DEVICE_TYPE_VENTILATION,
+        },
+        title="Airobot Ventilation",
+    )
+    other_entry.add_to_hass(hass)
+
+    result = await mock_vu_config_entry.start_reconfigure_flow(hass)
+
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {CONF_HOST: "192.168.1.201"},
+    )
+
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "already_configured"
+
+
+async def test_reauth_ventilation_unsupported(
+    hass: HomeAssistant,
+    mock_setup_entry: AsyncMock,
+    mock_vu_client: AsyncMock,
+    mock_vu_config_entry: MockConfigEntry,
+) -> None:
+    """Test reauth aborts for ventilation units."""
+    mock_vu_config_entry.add_to_hass(hass)
+
+    result = await mock_vu_config_entry.start_reauth_flow(hass)
+
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "reauth_unsupported"
+
+
+@pytest.mark.parametrize(
+    ("exception", "error_base"),
+    [
+        (VUConnectionError("Connection failed"), "cannot_connect"),
+        (VUTimeoutError("Timeout"), "cannot_connect"),
+        (Exception("Unknown error"), "unknown"),
+    ],
+)
+async def test_reconfigure_ventilation_errors(
+    hass: HomeAssistant,
+    mock_setup_entry: AsyncMock,
+    mock_vu_client: AsyncMock,
+    mock_vu_config_entry: MockConfigEntry,
+    exception: Exception,
+    error_base: str,
+) -> None:
+    """Test reconfiguration flow for ventilation unit with errors."""
+    mock_vu_config_entry.add_to_hass(hass)
+
+    result = await mock_vu_config_entry.start_reconfigure_flow(hass)
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "reconfigure_ventilation"
+
+    mock_vu_client.async_get_data.side_effect = exception
+
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {CONF_HOST: "192.168.1.201"},
+    )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["errors"] == {"base": error_base}
+
+    # Recover from error
+    mock_vu_client.async_get_data.side_effect = None
+
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {CONF_HOST: "192.168.1.201"},
+    )
+
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "reconfigure_successful"
+    assert mock_vu_config_entry.data[CONF_HOST] == "192.168.1.201"
