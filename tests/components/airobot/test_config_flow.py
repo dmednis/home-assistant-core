@@ -438,6 +438,54 @@ async def test_dhcp_discovery_ventilation(
     assert result["result"].unique_id == "aabbccddeeff"
 
 
+@pytest.mark.parametrize(
+    ("exception", "error_base"),
+    [
+        (VUError("Connection failed"), "cannot_connect"),
+        (Exception("Unknown error"), "unknown"),
+    ],
+)
+async def test_dhcp_discovery_ventilation_errors(
+    hass: HomeAssistant,
+    mock_setup_entry: AsyncMock,
+    mock_vu_client: AsyncMock,
+    exception: Exception,
+    error_base: str,
+) -> None:
+    """Test DHCP discovery for ventilation unit with error handling."""
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={"source": config_entries.SOURCE_DHCP},
+        data=DhcpServiceInfo(
+            ip="192.168.1.200",
+            macaddress="aabbccddeeff",
+            hostname="airobot-ventilation",
+        ),
+    )
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "vu_dhcp_confirm"
+
+    mock_vu_client.async_get_data.side_effect = exception
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {},
+    )
+    assert result["type"] is FlowResultType.FORM
+    assert result["errors"] == {"base": error_base}
+
+    # Recover from error
+    mock_vu_client.async_get_data.side_effect = None
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {},
+    )
+    await hass.async_block_till_done()
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["title"] == "Airobot Ventilation"
+    assert len(mock_setup_entry.mock_calls) == 1
+
+
 async def test_dhcp_discovery_ventilation_duplicate(
     hass: HomeAssistant,
     mock_setup_entry: AsyncMock,

@@ -27,27 +27,40 @@ async def test_vu_setup_entry_success(
 
 
 @pytest.mark.parametrize(
-    ("exception", "expected_state"),
+    ("method_name", "exception"),
     [
-        (AirobotConnectionError("Connection failed"), ConfigEntryState.SETUP_RETRY),
-        (AirobotTimeoutError("Timeout"), ConfigEntryState.SETUP_RETRY),
+        pytest.param(
+            "connect",
+            AirobotConnectionError("Connection failed"),
+            id="connect_error",
+        ),
+        pytest.param(
+            "async_get_data",
+            AirobotConnectionError("Connection failed"),
+            id="data_connection_error",
+        ),
+        pytest.param(
+            "async_get_data",
+            AirobotTimeoutError("Timeout"),
+            id="data_timeout",
+        ),
     ],
 )
 async def test_vu_setup_entry_exceptions(
     hass: HomeAssistant,
     mock_vu_client: AsyncMock,
     mock_vu_config_entry: MockConfigEntry,
+    method_name: str,
     exception: Exception,
-    expected_state: ConfigEntryState,
 ) -> None:
     """Test VU setup fails with connection exceptions."""
     mock_vu_config_entry.add_to_hass(hass)
-    mock_vu_client.async_get_data.side_effect = exception
+    getattr(mock_vu_client, method_name).side_effect = exception
 
     await hass.config_entries.async_setup(mock_vu_config_entry.entry_id)
     await hass.async_block_till_done()
 
-    assert mock_vu_config_entry.state is expected_state
+    assert mock_vu_config_entry.state is ConfigEntryState.SETUP_RETRY
     # The client connected during coordinator setup must not leak
     mock_vu_client.disconnect.assert_called_once()
 

@@ -2,6 +2,7 @@
 
 from unittest.mock import AsyncMock
 
+from pyairobotmodbus.exceptions import AirobotError as VUError
 from pyairobotrest.exceptions import AirobotError
 import pytest
 from syrupy.assertion import SnapshotAssertion
@@ -244,3 +245,25 @@ async def test_vu_switch_turn_off(
         blocking=True,
     )
     getattr(mock_vu_client, method_name).assert_called_once_with(False)
+
+
+@pytest.mark.usefixtures("entity_registry_enabled_by_default", "init_vu_integration")
+@pytest.mark.parametrize("service", [SERVICE_TURN_ON, SERVICE_TURN_OFF])
+async def test_vu_switch_error_handling(
+    hass: HomeAssistant,
+    mock_vu_client: AsyncMock,
+    service: str,
+) -> None:
+    """Test VU switch error handling for turn on/off operations."""
+    mock_vu_client.async_set_boost.side_effect = VUError("Test error")
+
+    with pytest.raises(HomeAssistantError, match="boost"):
+        await hass.services.async_call(
+            SWITCH_DOMAIN,
+            service,
+            {ATTR_ENTITY_ID: "switch.airobot_ventilation_boost"},
+            blocking=True,
+        )
+
+    expected_value = service == SERVICE_TURN_ON
+    mock_vu_client.async_set_boost.assert_called_once_with(expected_value)

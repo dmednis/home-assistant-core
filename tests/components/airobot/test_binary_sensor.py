@@ -3,6 +3,7 @@
 import pytest
 from syrupy.assertion import SnapshotAssertion
 
+from homeassistant.components.binary_sensor import DOMAIN as BINARY_SENSOR_DOMAIN
 from homeassistant.const import STATE_OFF, STATE_ON, Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
@@ -64,3 +65,9 @@ async def test_binary_sensor_states(
     state = hass.states.get("binary_sensor.airobot_ventilation_server_connected")
     assert state is not None
     assert state.state == STATE_ON
+
+
+@pytest.mark.usefixtures("init_integration")
+async def test_binary_sensor_not_created_for_thermostat(hass: HomeAssistant) -> None:
+    """Test no binary sensor entities are created for a thermostat entry."""
+    assert not hass.states.async_entity_ids(BINARY_SENSOR_DOMAIN)

@@ -6,6 +6,7 @@ from typing import Any
 from unittest.mock import AsyncMock
 
 from freezegun.api import FrozenDateTimeFactory
+from pyairobotmodbus.exceptions import AirobotError
 from pyairobotmodbus.models import AirobotData as VUData, OperatingMode
 import pytest
 from syrupy.assertion import SnapshotAssertion
@@ -19,6 +20,7 @@ from homeassistant.components.fan import (
 )
 from homeassistant.const import ATTR_ENTITY_ID, Platform
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import entity_registry as er
 
 from tests.common import MockConfigEntry, async_fire_time_changed, snapshot_platform
@@ -229,3 +231,44 @@ async def test_fan_set_percentage_zero(
     )
 
     mock_vu_client.async_set_power.assert_called_once_with(False)
+
+
+@pytest.mark.usefixtures("init_vu_integration")
+@pytest.mark.parametrize(
+    ("service", "service_data", "method_name"),
+    [
+        pytest.param(
+            SERVICE_TURN_ON, {ATTR_PERCENTAGE: 50}, "async_set_fan_speed", id="turn_on"
+        ),
+        pytest.param(SERVICE_TURN_OFF, {}, "async_set_power", id="turn_off"),
+        pytest.param(
+            SERVICE_SET_PERCENTAGE,
+            {ATTR_PERCENTAGE: 50},
+            "async_set_fan_speed",
+            id="set_percentage",
+        ),
+    ],
+)
+async def test_fan_command_errors(
+    hass: HomeAssistant,
+    mock_vu_client: AsyncMock,
+    service: str,
+    service_data: dict[str, Any],
+    method_name: str,
+) -> None:
+    """Test fan commands raise on device errors."""
+    getattr(mock_vu_client, method_name).side_effect = AirobotError("Test error")
+
+    with pytest.raises(HomeAssistantError, match="Failed to send fan command"):
+        await hass.services.async_call(
+            FAN_DOMAIN,
+            service,
+            {ATTR_ENTITY_ID: "fan.airobot_ventilation", **service_data},
+            blocking=True,
+        )
+
+
+@pytest.mark.usefixtures("init_integration")
+async def test_fan_not_created_for_thermostat(hass: HomeAssistant) -> None:
+    """Test no fan entities are created for a thermostat entry."""
+    assert not hass.states.async_entity_ids(FAN_DOMAIN)
