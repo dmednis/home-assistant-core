@@ -1,6 +1,10 @@
 """The Airobot integration."""
 
-from homeassistant.const import Platform
+from modbus_connection import ModbusTcpParams
+from pyairobotmodbus import DEFAULT_PORT, DEFAULT_UNIT_ID
+
+from homeassistant.components.modbus import async_get_unit
+from homeassistant.const import CONF_HOST, Platform
 from homeassistant.core import HomeAssistant
 
 from .const import CONF_DEVICE_TYPE, DEVICE_TYPE_VENTILATION
@@ -38,7 +42,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirobotConfigEntry) -> b
     """Set up Airobot from a config entry."""
     coordinator: AirobotDataUpdateCoordinator | AirobotVUCoordinator
     if _is_ventilation_entry(entry):
-        coordinator = AirobotVUCoordinator(hass, entry)
+        unit = async_get_unit(
+            hass,
+            entry,
+            ModbusTcpParams(host=entry.data[CONF_HOST], port=DEFAULT_PORT),
+            DEFAULT_UNIT_ID,
+        )
+        coordinator = AirobotVUCoordinator(hass, entry, unit)
         platforms = VU_PLATFORMS
     else:
         coordinator = AirobotDataUpdateCoordinator(hass, entry)

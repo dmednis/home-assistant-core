@@ -1,12 +1,14 @@
 """Test the Airobot config flow."""
 
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 from pyairobotmodbus.exceptions import (
     AirobotConnectionError as VUConnectionError,
     AirobotError as VUError,
+    AirobotReadError as VUReadError,
     AirobotTimeoutError as VUTimeoutError,
 )
+from pyairobotmodbus.models import AirobotIdentity
 from pyairobotrest.exceptions import (
     AirobotAuthError,
     AirobotConnectionError,
@@ -24,6 +26,7 @@ from homeassistant.components.airobot.const import (
 from homeassistant.const import CONF_HOST, CONF_MAC, CONF_PASSWORD, CONF_USERNAME
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.service_info.dhcp import DhcpServiceInfo
 
 from tests.common import MockConfigEntry
@@ -187,10 +190,66 @@ async def test_user_flow_ventilation(
     assert result["data"] == {
         **TEST_VU_INPUT,
         CONF_DEVICE_TYPE: DEVICE_TYPE_VENTILATION,
+        CONF_MAC: "aa:bb:cc:dd:ee:ff",
     }
-    # No serial number is available over Modbus, so no unique ID is set
-    assert result["result"].unique_id is None
+    # The MAC read from the unit matches the unique ID DHCP discovery assigns
+    assert result["result"].unique_id == "aa:bb:cc:dd:ee:ff"
     assert len(mock_setup_entry.mock_calls) == 1
+
+
+async def test_user_flow_ventilation_without_identity(
+    hass: HomeAssistant,
+    mock_setup_entry: AsyncMock,
+    mock_vu_client: AsyncMock,
+) -> None:
+    """Test firmware without the identity registers is keyed by host."""
+    mock_vu_client.async_get_identity.side_effect = VUReadError("Illegal address")
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": config_entries.SOURCE_USER}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {"next_step_id": "ventilation"},
+    )
+
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        TEST_VU_INPUT,
+    )
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["data"] == {
+        **TEST_VU_INPUT,
+        CONF_DEVICE_TYPE: DEVICE_TYPE_VENTILATION,
+    }
+    assert result["result"].unique_id is None
+
+
+async def test_ventilation_link_settings_conflict(
+    hass: HomeAssistant,
+    mock_setup_entry: AsyncMock,
+    mock_vu_client: AsyncMock,
+) -> None:
+    """Test a unit held over different Modbus link settings can't connect."""
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": config_entries.SOURCE_USER}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {"next_step_id": "ventilation"},
+    )
+
+    with patch(
+        "homeassistant.components.airobot.config_flow.async_get_temporary_unit",
+        side_effect=HomeAssistantError("In use with different link settings"),
+    ):
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            TEST_VU_INPUT,
+        )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["errors"] == {"base": "cannot_connect"}
 
 
 @pytest.mark.parametrize(
@@ -279,6 +338,32 @@ async def test_ventilation_duplicate_entry(
 
     assert result["type"] is FlowResultType.ABORT
     assert result["reason"] == "already_configured"
+
+
+async def test_ventilation_duplicate_mac(
+    hass: HomeAssistant,
+    mock_setup_entry: AsyncMock,
+    mock_vu_client: AsyncMock,
+    mock_vu_config_entry: MockConfigEntry,
+) -> None:
+    """Test a configured unit found at a new address updates the host."""
+    mock_vu_config_entry.add_to_hass(hass)
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": config_entries.SOURCE_USER}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {"next_step_id": "ventilation"},
+    )
+
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {CONF_HOST: "192.168.1.201"},
+    )
+
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "already_configured"
+    assert mock_vu_config_entry.data[CONF_HOST] == "192.168.1.201"
 
 
 @pytest.mark.usefixtures("mock_setup_entry")
@@ -434,8 +519,8 @@ async def test_dhcp_discovery_ventilation(
     assert result["title"] == "Airobot Ventilation"
     assert result["data"][CONF_HOST] == "192.168.1.200"
     assert result["data"][CONF_DEVICE_TYPE] == DEVICE_TYPE_VENTILATION
-    assert result["data"][CONF_MAC] == "aabbccddeeff"
-    assert result["result"].unique_id == "aabbccddeeff"
+    assert result["data"][CONF_MAC] == "aa:bb:cc:dd:ee:ff"
+    assert result["result"].unique_id == "aa:bb:cc:dd:ee:ff"
 
 
 @pytest.mark.parametrize(
@@ -493,19 +578,7 @@ async def test_dhcp_discovery_ventilation_duplicate(
     mock_vu_config_entry: MockConfigEntry,
 ) -> None:
     """Test DHCP discovery for ventilation unit with duplicate MAC."""
-    # The mock_vu_config_entry has unique_id "aa:bb:cc:dd:ee:ff"
-    # We need a matching MAC address format
-    vu_entry = MockConfigEntry(
-        domain=DOMAIN,
-        data={
-            CONF_HOST: "192.168.1.200",
-            CONF_DEVICE_TYPE: DEVICE_TYPE_VENTILATION,
-            CONF_MAC: "aabbccddeeff",
-        },
-        unique_id="aabbccddeeff",
-        title="Airobot Ventilation",
-    )
-    vu_entry.add_to_hass(hass)
+    mock_vu_config_entry.add_to_hass(hass)
 
     result = await hass.config_entries.flow.async_init(
         DOMAIN,
@@ -522,7 +595,7 @@ async def test_dhcp_discovery_ventilation_duplicate(
     assert result["reason"] == "already_configured"
 
     # Verify the IP was updated
-    assert vu_entry.data[CONF_HOST] == "192.168.1.201"
+    assert mock_vu_config_entry.data[CONF_HOST] == "192.168.1.201"
 
 
 async def test_dhcp_discovery_ventilation_manual_duplicate(
@@ -558,8 +631,8 @@ async def test_dhcp_discovery_ventilation_manual_duplicate(
 
     # The manual entry is upgraded with the discovered MAC so future
     # IP changes are tracked through the unique ID
-    assert vu_entry.unique_id == "aabbccddeeff"
-    assert vu_entry.data[CONF_MAC] == "aabbccddeeff"
+    assert vu_entry.unique_id == "aa:bb:cc:dd:ee:ff"
+    assert vu_entry.data[CONF_MAC] == "aa:bb:cc:dd:ee:ff"
 
 
 @pytest.mark.usefixtures("mock_setup_entry")
@@ -805,6 +878,29 @@ async def test_reconfigure_ventilation_conflict(
 
     assert result["type"] is FlowResultType.ABORT
     assert result["reason"] == "already_configured"
+
+
+async def test_reconfigure_ventilation_wrong_unit(
+    hass: HomeAssistant,
+    mock_setup_entry: AsyncMock,
+    mock_vu_client: AsyncMock,
+    mock_vu_config_entry: MockConfigEntry,
+) -> None:
+    """Test reconfiguring to a different unit is rejected."""
+    mock_vu_config_entry.add_to_hass(hass)
+    mock_vu_client.async_get_identity.return_value = AirobotIdentity(
+        serial_number="07654321", mac_address="11:22:33:44:55:66"
+    )
+
+    result = await mock_vu_config_entry.start_reconfigure_flow(hass)
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {CONF_HOST: "192.168.1.201"},
+    )
+
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "wrong_ventilation_unit"
+    assert mock_vu_config_entry.data[CONF_HOST] == "192.168.1.200"
 
 
 async def test_reauth_ventilation_unsupported(

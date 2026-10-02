@@ -5,9 +5,10 @@ from datetime import timedelta
 import logging
 from typing import override
 
+from modbus_connection import ModbusUnit
 from pyairobotmodbus import AirobotModbusClient
-from pyairobotmodbus.exceptions import AirobotError as VUError
-from pyairobotmodbus.models import AirobotData as AirobotVUData
+from pyairobotmodbus.exceptions import AirobotError as VUError, AirobotReadError
+from pyairobotmodbus.models import AirobotData as AirobotVUData, AirobotIdentity
 from pyairobotrest import AirobotClient
 from pyairobotrest.exceptions import AirobotAuthError, AirobotConnectionError
 
@@ -80,8 +81,11 @@ class AirobotVUCoordinator(DataUpdateCoordinator[AirobotVUData]):
     """Class to manage fetching Airobot VU data via Modbus."""
 
     config_entry: AirobotConfigEntry
+    identity: AirobotIdentity | None = None
 
-    def __init__(self, hass: HomeAssistant, entry: AirobotConfigEntry) -> None:
+    def __init__(
+        self, hass: HomeAssistant, entry: AirobotConfigEntry, unit: ModbusUnit
+    ) -> None:
         """Initialize the coordinator."""
         super().__init__(
             hass,
@@ -90,28 +94,21 @@ class AirobotVUCoordinator(DataUpdateCoordinator[AirobotVUData]):
             update_interval=UPDATE_INTERVAL,
             config_entry=entry,
         )
-        self.client = AirobotModbusClient(host=entry.data[CONF_HOST])
+        self.client = AirobotModbusClient(unit)
 
     @override
     async def _async_setup(self) -> None:
-        """Connect the Modbus client."""
+        """Read the unit's identity, which never changes."""
         try:
-            await self.client.connect()
+            self.identity = await self.client.async_get_identity()
+        except AirobotReadError:
+            # Firmware without the undocumented identity registers
+            self.identity = None
         except VUError as err:
             raise UpdateFailed(
                 translation_domain=DOMAIN,
                 translation_key="connection_failed",
             ) from err
-
-    @override
-    async def async_shutdown(self) -> None:
-        """Disconnect the Modbus client on shutdown.
-
-        Runs on unload, on failed setup, and on Home Assistant stop, so a
-        client connected during _async_setup never leaks.
-        """
-        await super().async_shutdown()
-        await self.client.disconnect()
 
     @override
     async def _async_update_data(self) -> AirobotVUData:

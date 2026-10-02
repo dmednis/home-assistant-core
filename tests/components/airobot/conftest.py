@@ -3,7 +3,12 @@
 from collections.abc import Generator
 from unittest.mock import AsyncMock, patch
 
-from pyairobotmodbus.models import AirobotData as VUData, ErrorFlag, OperatingMode
+from pyairobotmodbus.models import (
+    AirobotData as VUData,
+    AirobotIdentity,
+    ErrorFlag,
+    OperatingMode,
+)
 from pyairobotrest.models import (
     SettingFlags,
     StatusFlags,
@@ -204,6 +209,9 @@ def mock_vu_client(mock_vu_data: VUData) -> Generator[AsyncMock]:
     ):
         client = mock_client_class.return_value
         client.async_get_data.return_value = mock_vu_data
+        client.async_get_identity.return_value = AirobotIdentity(
+            serial_number="01234567", mac_address="aa:bb:cc:dd:ee:ff"
+        )
         yield client
 
 

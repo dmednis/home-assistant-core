@@ -66,5 +66,8 @@ class AirobotVUEntity(CoordinatorEntity[AirobotVUCoordinator]):
             name=entry.title,
             manufacturer="Airobot",
             model="Ventilation unit",
+            serial_number=(
+                coordinator.identity.serial_number if coordinator.identity else None
+            ),
             sw_version=str(coordinator.data.firmware_version),
         )

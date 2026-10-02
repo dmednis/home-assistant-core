@@ -6,9 +6,11 @@ from dataclasses import dataclass
 import logging
 from typing import Any, override
 
+from modbus_connection import ModbusTcpParams
 import probatio
-from pyairobotmodbus import AirobotModbusClient
-from pyairobotmodbus.exceptions import AirobotError as VUError
+from pyairobotmodbus import DEFAULT_PORT, DEFAULT_UNIT_ID, AirobotModbusClient
+from pyairobotmodbus.exceptions import AirobotError as VUError, AirobotReadError
+from pyairobotmodbus.models import AirobotIdentity
 from pyairobotrest import AirobotClient
 from pyairobotrest.exceptions import (
     AirobotAuthError,
@@ -17,11 +19,13 @@ from pyairobotrest.exceptions import (
     AirobotTimeoutError,
 )
 
+from homeassistant.components.modbus import async_get_temporary_unit
 from homeassistant.config_entries import ConfigFlow as BaseConfigFlow, ConfigFlowResult
 from homeassistant.const import CONF_HOST, CONF_MAC, CONF_PASSWORD, CONF_USERNAME
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers.device_registry import format_mac
 from homeassistant.helpers.service_info.dhcp import DhcpServiceInfo
 
 from .const import (
@@ -91,14 +95,24 @@ async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> DeviceInf
     return DeviceInfo(title=title, device_id=status.device_id)
 
 
-async def validate_ventilation_input(data: dict[str, Any]) -> None:
-    """Validate ventilation unit connection."""
-    client = AirobotModbusClient(host=data[CONF_HOST])
+async def validate_ventilation_input(
+    hass: HomeAssistant, data: dict[str, Any]
+) -> AirobotIdentity | None:
+    """Validate the ventilation unit connection and read its identity.
+
+    Returns None for firmware without the identity registers.
+    """
+    params = ModbusTcpParams(host=data[CONF_HOST], port=DEFAULT_PORT)
     try:
-        await client.connect()
-        await client.async_get_data()
-    finally:
-        await client.disconnect()
+        async with async_get_temporary_unit(hass, params, DEFAULT_UNIT_ID) as unit:
+            client = AirobotModbusClient(unit)
+            await client.async_get_data()
+            try:
+                return await client.async_get_identity()
+            except AirobotReadError:
+                return None
+    except (VUError, HomeAssistantError) as err:
+        raise CannotConnect from err
 
 
 class AirobotConfigFlow(BaseConfigFlow, domain=DOMAIN):
@@ -164,8 +178,8 @@ class AirobotConfigFlow(BaseConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
 
         if user_input is not None:
-            # The device exposes no serial number over Modbus, so entries
-            # are matched on the host instead of a unique ID
+            # Firmware without the identity registers leaves entries without
+            # a unique ID, so match on the host as well
             self._async_abort_entries_match(
                 {
                     CONF_HOST: user_input[CONF_HOST],
@@ -173,20 +187,22 @@ class AirobotConfigFlow(BaseConfigFlow, domain=DOMAIN):
                 }
             )
             try:
-                await validate_ventilation_input(user_input)
-            except VUError:
+                identity = await validate_ventilation_input(self.hass, user_input)
+            except CannotConnect:
                 errors["base"] = "cannot_connect"
             except Exception:
                 _LOGGER.exception("Unexpected exception")
                 errors["base"] = "unknown"
             else:
-                return self.async_create_entry(
-                    title="Airobot Ventilation",
-                    data={
-                        **user_input,
-                        CONF_DEVICE_TYPE: DEVICE_TYPE_VENTILATION,
-                    },
-                )
+                data = {**user_input, CONF_DEVICE_TYPE: DEVICE_TYPE_VENTILATION}
+                if identity is not None:
+                    mac = format_mac(identity.mac_address)
+                    await self.async_set_unique_id(mac)
+                    self._abort_if_unique_id_configured(
+                        updates={CONF_HOST: user_input[CONF_HOST]}
+                    )
+                    data[CONF_MAC] = mac
+                return self.async_create_entry(title="Airobot Ventilation", data=data)
 
         return self.async_show_form(
             step_id="ventilation",
@@ -207,11 +223,12 @@ class AirobotConfigFlow(BaseConfigFlow, domain=DOMAIN):
 
         if hostname == "airobot-ventilation":
             # Ventilation unit discovered
-            await self.async_set_unique_id(discovery_info.macaddress)
+            self._discovered_mac = format_mac(discovery_info.macaddress)
+            await self.async_set_unique_id(self._discovered_mac)
             self._abort_if_unique_id_configured(updates={CONF_HOST: discovery_info.ip})
-            # Manually added entries have no unique ID and are keyed by host;
-            # upgrade them with the discovered MAC so later IP changes are
-            # tracked through the unique ID like DHCP-created entries
+            # Entries added manually on firmware without the identity registers
+            # have no unique ID and are keyed by host; upgrade them with the
+            # discovered MAC so later IP changes are tracked like other entries
             for entry in self._async_current_entries(include_ignore=False):
                 if (
                     entry.data.get(CONF_DEVICE_TYPE) == DEVICE_TYPE_VENTILATION
@@ -220,8 +237,8 @@ class AirobotConfigFlow(BaseConfigFlow, domain=DOMAIN):
                     if entry.unique_id is None:
                         self.hass.config_entries.async_update_entry(
                             entry,
-                            unique_id=discovery_info.macaddress,
-                            data={**entry.data, CONF_MAC: discovery_info.macaddress},
+                            unique_id=self._discovered_mac,
+                            data={**entry.data, CONF_MAC: self._discovered_mac},
                         )
                     return self.async_abort(reason="already_configured")
             return await self.async_step_vu_dhcp_confirm()
@@ -292,8 +309,8 @@ class AirobotConfigFlow(BaseConfigFlow, domain=DOMAIN):
             data = {CONF_HOST: self._discovered_host}
 
             try:
-                await validate_ventilation_input(data)
-            except VUError:
+                await validate_ventilation_input(self.hass, data)
+            except CannotConnect:
                 errors["base"] = "cannot_connect"
             except Exception:
                 _LOGGER.exception("Unexpected exception")
@@ -375,13 +392,16 @@ class AirobotConfigFlow(BaseConfigFlow, domain=DOMAIN):
                 }
             )
             try:
-                await validate_ventilation_input(user_input)
-            except VUError:
+                identity = await validate_ventilation_input(self.hass, user_input)
+            except CannotConnect:
                 errors["base"] = "cannot_connect"
             except Exception:
                 _LOGGER.exception("Unexpected exception")
                 errors["base"] = "unknown"
             else:
+                if identity is not None and reconfigure_entry.unique_id is not None:
+                    await self.async_set_unique_id(format_mac(identity.mac_address))
+                    self._abort_if_unique_id_mismatch(reason="wrong_ventilation_unit")
                 return self.async_update_reload_and_abort(
                     reconfigure_entry,
                     data_updates=user_input,
